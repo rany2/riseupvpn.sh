@@ -6,6 +6,7 @@ declare -g pid_file=""
 declare -g should_exit=0
 declare -g keep_fw=""
 declare -g keep_fw2=""
+declare -g keep_fw3=""
 
 # https://stackoverflow.com/a/26966800
 kill_descendant_processes() {
@@ -22,6 +23,7 @@ kill_descendant_processes() {
 }
 
 _command() {
+	IFS=''
 	for x in ${@}; do
 		if ! command -v $x &> /dev/null; then
 			echo "$x could not be found. Please install it." >&2
@@ -35,6 +37,7 @@ on_exit() {
 	local _jobs="$(jobs -p) $(cat "$pid_file" 2>/dev/null)"
 	echo "* Killed all of the script's background processes"
 	if [ -n "$_jobs" ]; then
+		IFS=' '
 		for x in $_jobs; do
 			kill_descendant_processes $x true >/dev/null 2>&1
 		done
@@ -52,7 +55,24 @@ on_exit() {
 	set -u
 }
 
-_command curl jq sed umask mktemp tee openvpn sh grep nc id awk ip iptables ip6tables cut pgrep kill conntrack
+_command curl jq sed umask mktemp tee openvpn sh grep nc id awk ip iptables ip6tables cut pgrep kill conntrack openssl tr
+
+[ "$should_exit" = "1" ] && exit 1
+unset should_exit
+
+# Check if required user and group for openvpn are installed
+if [ "$(getent passwd nobody)" = "" ];then
+	echo "You need to have nobody as a user" >&2
+	declare -g should_exit=1
+fi
+if [ "$(getent group nobody)" != "" ];then
+	declare -g unprivgroup="nobody"
+elif [ "$(getent group nogroup)" != "" ];then
+	declare -g unprivgroup="nogroup"
+else
+	echo "You need to have either nobody or nogroup as a group" >&2
+	declare -g should_exit=1
+fi
 [ "$should_exit" = "1" ] && exit 1
 unset should_exit
 
@@ -62,23 +82,44 @@ set -um
 
 declare -g _riseupvpn="https://api.black.riseup.net"
 declare -g _riseupvpn_gw="https://api.black.riseup.net:9001"
-declare -g _riseupvpn_ca="riseupvpn.cert"
-declare -g _curl_std_opts_api=
+declare -g _riseupvpn_ca="https://black.riseup.net/provider.json"
+declare -a -g _curl_std_opts_api=()
 declare -a -g blacklist_locations
 source riseupvpn.config >/dev/null 2>&1
-declare -g _curl_std_opts_api+=" --silent --fail --capath /dev/null --cacert $_riseupvpn_ca"
+declare -g _curl_std_opts_api+=(--silent --fail "--capath" "/dev/null")
+declare -a -g _curl_fw_ip=()
+declare -g api_cert=""
+
+get_api_ca() {
+	local x=0; while :; do
+		local _curl_fw_ip=("--connect-to" "$(echo "$_riseupvpn_ca" | awk -F[/:] '{print $4}')::$keep_fw3:")
+		IFS=$'\n'
+		local ca_cert=( $(curl --silent "${_curl_fw_ip[@]}" "${_riseupvpn_ca}" | jq -cr '.ca_cert_uri+"\n"+.ca_cert_fingerprint'))
+		declare -g api_cert="$(curl --silent "${_curl_fw_ip[@]}" "${ca_cert[0]}")"
+		local api_finger="$(echo "$api_cert" | openssl x509 -sha256 -fingerprint -noout | sed -e 's/://g' -e 's/ Fingerprint=/: /g' | tr '[:lower:]' '[:upper:]')"
+		ca_cert[1]="$(echo "${ca_cert[1]}" | tr '[:lower:]' '[:upper:]')"
+		if [ "${api_finger}" == "${ca_cert[1]}" ]; then
+			echo "* Got API certificate and verfied";
+			return 0
+		else
+			echo "* API certificate is invalid and verfication failed. Retrying"
+			[ $x -ge 10 ] && exit 1
+		fi
+		local x=$((x+1))
+	done
+}
 
 make_cert_and_cmdline() {
-	[ -n "$keep_fw" ]  && local _curl_std_opts_api="$_curl_std_opts_api --connect-to $(echo "$_riseupvpn"    | awk -F[/:] '{print $4}')::$keep_fw: "
+	[ -n "$keep_fw" ] && local _curl_fw_ip=("--connect-to" "$(echo "$_riseupvpn" | awk -F[/:] '{print $4}')::$keep_fw:")
 	if [ "$_riseupvpn_gw" != "none" ];then
-		[ -n "$keep_fw2" ] && local _curl_std_opts_api="$_curl_std_opts_api --connect-to $(echo "$_riseupvpn_gw" | awk -F[/:] '{print $4}')::$keep_fw2: "
+		[ -n "$keep_fw2" ] && local _curl_fw_ip+=("--connect-to" "$(echo "$_riseupvpn_gw" | awk -F[/:] '{print $4}')::$keep_fw2:")
 		echo "* Getting list of closest VPN gateways"
-		local riseupvpn_gw_list="$(curl $_curl_std_opts_api $_riseupvpn_gw/json)"
+		local riseupvpn_gw_list="$(curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn_gw/json")"
 		local -a riseupvpn_gw_sel=( $(echo "$riseupvpn_gw_list" | jq -cr '.gateways[0:] | .[]') )
 		unset riseupvpn_gw_list
 	fi
 	echo "* Getting new public and private certificate for the OpenVPN connection"
-	local riseupvpn_cert="$(curl $_curl_std_opts_api $_riseupvpn/3/cert || curl $_curl_std_opts_api $_riseupvpn/1/cert)"
+	local riseupvpn_cert="$(curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/cert" || curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/cert")"
 	local riseupvpn_private_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d')"
 	local riseupvpn_public_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d')"
 	unset riseupvpn_cert
@@ -87,12 +128,12 @@ make_cert_and_cmdline() {
 	declare -g riseupvpn_public_key_file="$(echo "$riseupvpn_public_key"  | sh -c 'umask 077; mktemp="$(mktemp -u)"; echo "$mktemp"; tee "$mktemp" >/dev/null')"
 	unset riseupvpn_public_key
 
-	declare -g make_opts=""
+	declare -a -g make_opts=""
 	declare -a -g firewall=""
 	echo "* Getting list of all VPN gateways, OpenVPN configuration and IP addresses"
-	declare riseupvpn_gws="$(curl $_curl_std_opts_api $_riseupvpn/3/config/eip-service.json || curl $_curl_std_opts_api $_riseupvpn/1/config/eip-service.json)"
+	declare riseupvpn_gws="$(curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/config/eip-service.json" || curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/config/eip-service.json")"
 	declare -a gw_len=( $(echo "$riseupvpn_gws" | jq -r '.gateways[] | .ip_address') )
-	for i in ${!gw_len[@]}; do
+	IFS=''; for i in ${!gw_len[@]}; do
 		set +u
 		[ -n "$riseupvpn_gw_sel[$i]" ] && local riseupvpn_gw_sel[$i]="$(echo "$riseupvpn_gws" | jq -cr  ".gateways[] | select(.host == \"${riseupvpn_gw_sel[$i]}\") | .ip_address")"
 		set -u
@@ -110,16 +151,18 @@ make_cert_and_cmdline() {
 			case $proto in
 					tcp) local proto="tcp-client" ;;
 			esac
-			declare -g make_opts="$make_opts --remote ${riseupvpn_gw_sel[$i]} $port $proto"
+			declare -a -g make_opts+=("remote ${riseupvpn_gw_sel[$i]} $port $proto")
 		fi
 	done
-	declare -g universal_opts="$(echo "$riseupvpn_gws" | jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""')"
-	declare -g universal_opts="$(echo "$universal_opts" | sed -e '/ \"false\"/d' -e 's/ \"true\"//g'  -e 's/\"/\n/g' -e 's/\n/ /g')"
-	unset riseupvpn_gws riseupvpn_gw_sel gw_len
+	declare -g ovpn_config_file="$(echo "$riseupvpn_gws" | jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""')"
+	IFS=$'\n' declare -a -g ovpn_config_file=( $(echo "$ovpn_config_file" | sed -e '/ \"false\"$/d' -e 's/ \"true\"$//g' -e 's/ \"/ /g' -e 's/\"$//g' -e 's/^--//g') )
+	declare -g ovpn_config_file="$(IFS=''; for x in ${!ovpn_config_file[@]}; do echo ${ovpn_config_file[x]}; done;)"
+	declare -g ovpn_config_file+="$(IFS=''; for x in ${!make_opts[@]}; do echo ${make_opts[x]}; done;)"
+	unset riseupvpn_gws riseupvpn_gw_sel gw_len make_opts
 }
 
 keep_fw_onreconnect() {
-	local x=0; while [ -z "$keep_fw" ] || [ -z "$keep_fw2" ]; do
+	local x=0; while [ -z "$keep_fw" ] || [ -z "$keep_fw2" ] || [ -z "$keep_fw3" ]; do
 		[ "$x" == "0" ] && echo "* Getting API IP addresses for reconnect" && local x=1
 		sleep 0.1
 		declare -g keep_fw="$(getent ahostsv4 "$(echo "$_riseupvpn" | awk -F[/:] '{print $4}')" | grep STREAM | head -n 1 | cut -d ' ' -f 1)"
@@ -128,18 +171,20 @@ keep_fw_onreconnect() {
 		else
 			declare -g keep_fw2=none
 		fi
+		declare -g keep_fw3="$(getent ahostsv4 "$(echo "$_riseupvpn_ca" | awk -F[/:] '{print $4}')" | grep STREAM | head -n 1 | cut -d ' ' -f 1)"
 	done
 	[ "$x" == "1" ] && echo "* Got API IP addresses for reconnect"
 	fw_start >/dev/null 2>&1
 }
 
 openvpn_start() {
+	IFS=''
 	declare -g management_sock="$(mktemp -u)"
 	declare -g pid_file="$(mktemp -u)"
-	openvpn --client --daemon --nobind --management $management_sock unix --management-signal --management-client-user "$(id -un)" \
-		--dev tunriseupvpn --ca "$_riseupvpn_ca" --cert "$riseupvpn_public_key_file" --key "$riseupvpn_private_key_file" \
+	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") --remap-usr1 SIGTERM --client --nobind --management $management_sock unix --management-signal --management-client-user "$(id -un)" \
+		--management-client-group "$(id -gn)" --dev tunriseupvpn --cert "$riseupvpn_public_key_file" --key "$riseupvpn_private_key_file" \
 		--tls-client --remote-cert-tls server --persist-key --persist-tun --persist-local-ip --auth-nocache --user nobody \
-		--group nogroup --writepid "$pid_file" --script-security 1 --verb 0 --remap-usr1 SIGTERM $universal_opts $make_opts >/dev/null 2>&1
+		--group "$unprivgroup" --writepid "$pid_file" --script-security 1 --verb 0 >/dev/null 2>&1
 }
 
 check_if_changes() {
@@ -150,6 +195,8 @@ check_if_changes() {
 }
 
 fw_start() {
+	IFS=' '
+
 	iptables  --new-chain riseupvpn-bash
 	ip6tables --new-chain riseupvpn-bash
 
@@ -217,6 +264,7 @@ fw_start() {
 	local z=0
 	[ -n "$keep_fw"  ] && iptables -I riseupvpn-bash -d ${keep_fw} -j ACCEPT && local z=1
 	[ -n "$keep_fw2" ] && [ "$keep_fw2" != "none" ] && iptables -I riseupvpn-bash -d ${keep_fw2} -j ACCEPT
+	[ -n "$keep_fw3" ] && iptables -I riseupvpn-bash -d ${keep_fw3} -j ACCEPT
 	if [ "$z" = "1" ];then
 		iptables  -t nat -I riseupvpn-bashnat -p udp --dport 53 -j DNAT --to 10.41.0.1:53
 		iptables  -t nat -I riseupvpn-bashnat -p tcp --dport 53 -j DNAT --to 10.41.0.1:53
@@ -308,6 +356,7 @@ main() {
 	local y=1;while :; do
 		echo "* Connection #$y"
 		keep_fw_onreconnect >/dev/null 2>&1
+		get_api_ca
 		make_cert_and_cmdline
 		keep_fw_onreconnect >/dev/null 2>&1
 		openvpn_start >/dev/null 2>&1
