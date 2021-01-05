@@ -43,11 +43,9 @@ on_exit() {
 		done
 	fi
 	echo "* Removed residue files"
-	rm -f -- "$riseupvpn_private_key_file" "$riseupvpn_public_key_file" "$management_sock" "$pid_file" 2>/dev/null
+	rm -f -- "$management_sock" "$pid_file" 2>/dev/null
 	declare -g pid_file=""
 	declare -g management_sock=""
-	declare -g riseupvpn_private_key_file=""
-	declare -g riseupvpn_public_key_file=""
 	if [ "$1" != "nofwstop" ]; then
 		fw_stop >/dev/null 2>&1
 	fi
@@ -120,13 +118,9 @@ make_cert_and_cmdline() {
 	fi
 	echo "* Getting new public and private certificate for the OpenVPN connection"
 	local riseupvpn_cert="$(curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/cert" || curl "${_curl_std_opts_api[@]}" "${_curl_fw_ip[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/cert")"
-	local riseupvpn_private_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d')"
-	local riseupvpn_public_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d')"
+	declare -g riseupvpn_private_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d')"
+	declare -g riseupvpn_public_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d')"
 	unset riseupvpn_cert
-	declare -g riseupvpn_private_key_file="$(echo "$riseupvpn_private_key" | sh -c 'umask 077; mktemp="$(mktemp -u)"; echo "$mktemp"; tee "$mktemp" >/dev/null')"
-	unset riseupvpn_private_key
-	declare -g riseupvpn_public_key_file="$(echo "$riseupvpn_public_key"  | sh -c 'umask 077; mktemp="$(mktemp -u)"; echo "$mktemp"; tee "$mktemp" >/dev/null')"
-	unset riseupvpn_public_key
 
 	declare -a -g make_opts=""
 	declare -a -g firewall=""
@@ -181,10 +175,12 @@ openvpn_start() {
 	IFS=''
 	declare -g management_sock="$(mktemp -u)"
 	declare -g pid_file="$(mktemp -u)"
-	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") --remap-usr1 SIGTERM --client --nobind --management $management_sock unix --management-signal --management-client-user "$(id -un)" \
-		--management-client-group "$(id -gn)" --dev tunriseupvpn --cert "$riseupvpn_public_key_file" --key "$riseupvpn_private_key_file" \
-		--tls-client --remote-cert-tls server --persist-key --persist-tun --persist-local-ip --auth-nocache --user nobody \
-		--group "$unprivgroup" --writepid "$pid_file" --script-security 1 --verb 0 >/dev/null 2>&1
+	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") \
+		--cert <(printf %s "$riseupvpn_public_key") --key <(printf %s "$riseupvpn_private_key") \
+		--remap-usr1 SIGTERM --client --nobind --management $management_sock unix --management-signal \
+		--management-client-user "$(id -un)" --management-client-group "$(id -gn)" --dev tunriseupvpn \
+		--tls-client --remote-cert-tls server --persist-key --persist-tun --persist-local-ip --auth-nocache \
+		--user nobody --group "$unprivgroup" --writepid "$pid_file" --script-security 1 --verb 0 >/dev/null 2>&1
 }
 
 check_if_changes() {
