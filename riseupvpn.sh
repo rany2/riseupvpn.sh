@@ -53,7 +53,7 @@ on_exit() {
 	set -u
 }
 
-_command curl jq sed umask mktemp tee openvpn sh grep nc id awk ip iptables ip6tables cut pgrep kill conntrack openssl tr
+_command curl jq sed umask mktemp tee openvpn sh grep netcat id awk ip iptables ip6tables cut pgrep kill conntrack openssl
 
 [ "$should_exit" = "1" ] && exit 1
 unset should_exit
@@ -94,9 +94,8 @@ get_api_ca() {
 		IFS=$'\n'
 		local ca_cert=( $(curl --silent "${_curl_fw_ip[@]}" "${_riseupvpn_ca}" | jq -cr '.ca_cert_uri+"\n"+.ca_cert_fingerprint'))
 		declare -g api_cert="$(curl --silent "${_curl_fw_ip[@]}" "${ca_cert[0]}")"
-		local api_finger="$(echo "$api_cert" | openssl x509 -sha256 -fingerprint -noout | sed -e 's/://g' -e 's/ Fingerprint=/: /g' | tr '[:lower:]' '[:upper:]')"
-		ca_cert[1]="$(echo "${ca_cert[1]}" | tr '[:lower:]' '[:upper:]')"
-		if [ "${api_finger}" == "${ca_cert[1]}" ]; then
+		local api_finger="$(echo "$api_cert" | openssl x509 -sha256 -fingerprint -noout | sed -e 's/://g' -e 's/ Fingerprint=/: /g')"
+		if [ "${api_finger,,}" == "${ca_cert[1],,}" ]; then
 			echo "* Got API certificate and verfied";
 			return 0
 		else
@@ -187,7 +186,7 @@ check_if_changes() {
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		echo "$line" | grep -E -m 1 '^>STATE:.*,CONNECTED,SUCCESS,' >/dev/null 2>&1 && conntrack --flush >/dev/null 2>&1
 		echo "$line" | grep -E -m 1 '^>STATE:.*,RECONNECTING,'      >/dev/null 2>&1 && break             >/dev/null 2>&1
-	done < <(echo -e 'state on' | nc -U "$management_sock")
+	done < <(echo -e 'state on' | netcat -U "$management_sock")
 }
 
 fw_start() {
