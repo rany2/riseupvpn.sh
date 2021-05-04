@@ -184,7 +184,7 @@ check_if_changes() {
 			EOF
 		fi
 		echo "$line" | grep -E -m 1 '^>STATE:.*,RECONNECTING,' >/dev/null 2>&1 && break >/dev/null 2>&1
-	done < <(echo -e 'state on' | netcat -U "$management_sock")
+	done < <(echo 'state on' | netcat -U "$management_sock")
 }
 
 # Main function to call all other functions
