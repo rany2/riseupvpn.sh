@@ -1,7 +1,7 @@
 #!/bin/bash
 
 install -o root -g root -m 0755 -D "$(realpath $(dirname "${BASH_SOURCE[0]}"))"/riseupvpn.sh -t /usr/share/riseupvpn.sh;
-install -o root -g root -m 0644 -D "$(realpath $(dirname "${BASH_SOURCE[0]}"))"/riseupvpn.config -t /usr/share/riseupvpn.sh;
+install -o root -g root -m 0644 -D "$(realpath $(dirname "${BASH_SOURCE[0]}"))"/riseupvpn.conf -t /usr/share/riseupvpn.sh;
 mkdir -p /etc/systemd/system
 cat > /etc/systemd/system/riseupvpn.sh.service <<EOF
 [Unit]
