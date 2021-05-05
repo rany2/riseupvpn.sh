@@ -21,8 +21,10 @@ _command() {
 on_exit() {
 	set +u
 	local is_removed=0
-	[ -f "$management_sock" ] && rm -f -- "$management_sock" 2>/dev/null && is_removed=1
-	[ -f "$pid_file" ] && rm -f -- "$pid_file" 2>/dev/null && is_removed=1
+	# Use -e instead of -f because we are also dealing with non-regular files
+	# (-f only passed on files + regular)
+	[ -e "$management_sock" ] && rm -f -- "$management_sock" 2>/dev/null && is_removed=1
+	[ -e "$pid_file" ] && rm -f -- "$pid_file" 2>/dev/null && is_removed=1
 	[ $is_removed -eq 1 ] && echo "* Removed residue files"
 	declare -g pid_file=""
 	declare -g management_sock=""
@@ -56,10 +58,17 @@ unset should_exit
 
 # Set default variables and parse options
 declare -g showlocation=0
-while getopts 'l' opt
+declare -a -g openvpnconfig=()
+while getopts 'lo:' opt
 do
 	case "$opt" in
+		# Show all available locations
 		l) showlocation=1 ;;
+
+		# Custom OpenVPN options
+		# Specify -o multiple times for each openvpn argument
+		o) openvpnconfig+=("$OPTARG") ;;
+
 		*) exit 1;
 	esac
 done
@@ -179,7 +188,7 @@ openvpn_start() {
 	declare -g management_sock pid_file
 	management_sock="$(mktemp -u)"
 	pid_file="$(mktemp -u)"
-	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") \
+	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") "${openvpnconfig[@]}" \
 		--cert <(printf %s "$riseupvpn_public_key") --key <(printf %s "$riseupvpn_private_key") \
 		--remap-usr1 SIGTERM --client --nobind --management "$management_sock" unix --management-signal \
 		--management-client-user "$(id -un)" --management-client-group "$(id -gn)" --dev "$device" --tls-client \
