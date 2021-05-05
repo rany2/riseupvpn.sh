@@ -38,7 +38,7 @@ on_exit() {
 }
 
 # Requirements for this script
-_command curl jq sed mktemp openvpn grep netcat id cut kill openssl resolvconf
+_command curl jq sed mktemp openvpn egrep netcat id kill openssl resolvconf
 
 # Check if required user and group for openvpn are installed
 if [ "$(getent passwd nobody)" = "" ]
@@ -173,9 +173,10 @@ openvpn_start() {
 
 # Make sure the OpenVPN connection is alive and well
 check_if_changes() {
+	# shellcheck disable=SC2196
 	while IFS= read -r line || [[ -n "$line" ]]
 	do
-		if echo "$line" | grep -E -m 1 '^>STATE:.*,CONNECTED,' >/dev/null 2>&1
+		if echo "$line" | egrep -m 1 '^>STATE:.*,CONNECTED,' >/dev/null 2>&1
 		then
 			resolvconf -x -a "$device" <<-EOF
 				nameserver 10.41.0.1
@@ -183,7 +184,7 @@ check_if_changes() {
 				search ~.
 			EOF
 		fi
-		echo "$line" | grep -E -m 1 '^>STATE:.*,RECONNECTING,' >/dev/null 2>&1 && break >/dev/null 2>&1
+		echo "$line" | egrep -m 1 '^>STATE:.*,RECONNECTING,' >/dev/null 2>&1 && break >/dev/null 2>&1
 	done < <(echo 'state on' | netcat -U "$management_sock")
 }
 
