@@ -84,6 +84,8 @@ get_api_ca() {
 	while :
 	do
 		IFS=$'\n'
+		# Cache old API cert as it's unlikely to change
+		[ -n "$api_cert" ] && break
 		# shellcheck disable=SC2207
 		ca_cert=( $(curl --silent "${_riseupvpn_ca}" | jq -cr '.ca_cert_uri+"\n"+.ca_cert_fingerprint'))
 		api_cert="$(curl --silent "${ca_cert[0]}")"
