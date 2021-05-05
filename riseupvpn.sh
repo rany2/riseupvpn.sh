@@ -4,8 +4,7 @@ declare -g device="tunriseup$RANDOM"
 declare -g pid_file=""
 declare -g should_exit=0
 
-# Function to notify user about missing dependencies
-# and signals that exiting with failure is needed
+# Function to notify user about missing dependencies and signals that exiting with failure is needed
 _command() {
 	IFS=''
 	for x in "${@}"
@@ -50,9 +49,21 @@ else
 	declare -g should_exit=1
 fi
 
-# Setup settings for the rest of the script
+# Exit if we've failed
 [ "$should_exit" = "1" ] && exit 1
 unset should_exit
+
+# Set default variables and parse options
+declare -g showlocation=0
+while getopts 'l' opt
+do
+	case "$opt" in
+		l) showlocation=1 ;;
+		*) exit 1;
+	esac
+done
+
+# Run on_exit function on exit and some safety options
 trap 'on_exit' EXIT
 set -um
 
@@ -65,16 +76,6 @@ declare -a -g blacklist_locations
 source riseupvpn.conf >/dev/null 2>&1
 declare -g _curl_std_opts_api+=(--silent --fail "--capath" "/dev/null")
 declare -g api_cert=""
-declare -g showlocation=0
-
-# Parse options
-while getopts 'l' opt
-do
-	case "$opt" in
-		l) showlocation=1 ;;
-		*) exit 1;
-	esac
-done
 
 # Get the API's certificate, I believe this is how it should be done
 get_api_ca() {
@@ -100,22 +101,6 @@ get_api_ca() {
 
 # Create certificate and OVPN config for RiseupVPN
 make_cert_and_cmdline() {
-	if [ "$_riseupvpn_gw" != "none" ]
-	then
-		echo "* Getting list of closest VPN gateways"
-		local riseupvpn_gw_sel
-		riseupvpn_gw_list="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn_gw/json")"
-		# shellcheck disable=SC2207
-		riseupvpn_gw_sel=( $(jq -cr '.gateways[0:] | .[]' <<< "$riseupvpn_gw_list") )
-		unset riseupvpn_gw_list
-	fi
-	echo "* Getting new public and private certificate for the OpenVPN connection"
-	riseupvpn_cert="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/cert" || curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/cert")"
-	declare -g riseupvpn_private_key riseupvpn_public_key
-	riseupvpn_private_key="$(sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d' <<< "$riseupvpn_cert")"
-	riseupvpn_public_key="$(sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d' <<< "$riseupvpn_cert")"
-	unset riseupvpn_cert
-
 	declare -a -g make_opts=""
 	echo "* Getting list of all VPN gateways, OpenVPN configuration and IP addresses"
 	declare riseupvpn_gws
@@ -133,6 +118,22 @@ make_cert_and_cmdline() {
 		echo
 		exit 0
 	fi
+
+	if [ "$_riseupvpn_gw" != "none" ]
+	then
+		echo "* Getting list of closest VPN gateways"
+		local riseupvpn_gw_sel
+		riseupvpn_gw_list="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn_gw/json")"
+		# shellcheck disable=SC2207
+		riseupvpn_gw_sel=( $(jq -cr '.gateways[0:] | .[]' <<< "$riseupvpn_gw_list") )
+		unset riseupvpn_gw_list
+	fi
+	echo "* Getting new public and private certificate for the OpenVPN connection"
+	riseupvpn_cert="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/cert" || curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/cert")"
+	declare -g riseupvpn_private_key riseupvpn_public_key
+	riseupvpn_private_key="$(sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d' <<< "$riseupvpn_cert")"
+	riseupvpn_public_key="$(sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d' <<< "$riseupvpn_cert")"
+	unset riseupvpn_cert
 
 	# shellcheck disable=SC2207
 	declare -a gw_len=( $(jq -r '.gateways[] | .ip_address' <<< "$riseupvpn_gws") )
@@ -180,8 +181,8 @@ openvpn_start() {
 	openvpn --daemon --config <(printf %s "$ovpn_config_file") --ca <(printf %s "$api_cert") \
 		--cert <(printf %s "$riseupvpn_public_key") --key <(printf %s "$riseupvpn_private_key") \
 		--remap-usr1 SIGTERM --client --nobind --management "$management_sock" unix --management-signal \
-		--management-client-user "$(id -un)" --management-client-group "$(id -gn)" --dev "$device" \
-		--tls-client --remote-cert-tls server --persist-key --persist-tun --persist-local-ip --auth-nocache \
+		--management-client-user "$(id -un)" --management-client-group "$(id -gn)" --dev "$device" --tls-client \
+		--remote-cert-tls server --persist-key --persist-tun --persist-local-ip --auth-nocache --tls-version-min 1.0 \
 		--user nobody --group "$unprivgroup" --writepid "$pid_file" --script-security 1 --verb 0 >/dev/null 2>&1
 }
 
