@@ -72,6 +72,16 @@ declare -a -g blacklist_locations
 source riseupvpn.conf >/dev/null 2>&1
 declare -g _curl_std_opts_api+=(--silent --fail "--capath" "/dev/null")
 declare -g api_cert=""
+declare -g showlocation=0
+
+# Parse options
+while getopts 'l' opt
+do
+	case "$opt" in
+		l) showlocation=1 ;;
+		*) exit 1;
+	esac
+done
 
 # Get the API's certificate, I believe this is how it should be done
 get_api_ca() {
@@ -117,6 +127,20 @@ make_cert_and_cmdline() {
 	echo "* Getting list of all VPN gateways, OpenVPN configuration and IP addresses"
 	declare riseupvpn_gws
 	riseupvpn_gws="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/config/eip-service.json" || curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/config/eip-service.json")"
+
+	# Show list of RiseupVPN locations if requested by user
+	if [ $showlocation -eq 1 ]
+	then
+		echo
+		echo "* Available locations:"
+		while read -r l
+		do
+			echo "  - $l"
+		done < <(jq -cr '.locations | to_entries[] | .key' <<< "$riseupvpn_gws")
+		echo
+		exit 0
+	fi
+
 	# shellcheck disable=SC2207
 	declare -a gw_len=( $(jq -r '.gateways[] | .ip_address' <<< "$riseupvpn_gws") )
 	IFS=''
