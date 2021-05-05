@@ -21,13 +21,6 @@ _command() {
 # Function to clean-up on exit
 on_exit() {
 	set +u
-	_jobs="$(cat "$pid_file" 2>/dev/null) $(jobs -p)"
-	echo "* Killed all of the script's background processes"
-	IFS=' '
-	for x in $_jobs
-	do
-		kill -9 "$x" >/dev/null 2>&1
-	done
 	echo "* Removed residue files"
 	rm -f -- "$management_sock" "$pid_file" 2>/dev/null
 	declare -g pid_file=""
@@ -163,8 +156,8 @@ make_cert_and_cmdline() {
 		if [[ ! ${blacklist_locations[*]} =~ $location ]] || [[ -z $location ]]
 		then
 			local port proto
-			port="$(jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .ports[0]" <<< "$riseupvpn_gws")"
-			proto="$(jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .protocols[0]" <<< "$riseupvpn_gws")"
+			port="$(jq -cr ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .ports[0]" <<< "$riseupvpn_gws")"
+			proto="$(jq -cr ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .protocols[0]" <<< "$riseupvpn_gws")"
 			case $proto in
 					tcp) local proto="tcp-client" ;;
 			esac
@@ -174,8 +167,7 @@ make_cert_and_cmdline() {
 	declare -g ovpn_config_file
 	ovpn_config_file="$(jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""' <<< "$riseupvpn_gws")"
 	IFS=$'\n' ovpn_config_file="$(sed -e '/ \"false\"$/d' -e 's/ \"true\"$//g' -e 's/ \"/ /g' -e 's/\"$//g' -e 's/^--//g' <<< "$ovpn_config_file")"
-	ovpn_config_file="$(IFS=''; for x in "${!ovpn_config_file[@]}"; do printf '%s\n' "${ovpn_config_file[x]}"; done;)"
-	ovpn_config_file="${ovpn_config_file} $(IFS=''; for x in "${!make_opts[@]}"; do printf '%s\n' "${make_opts[x]}"; done;)"
+	ovpn_config_file="${ovpn_config_file}$(IFS=''; for x in "${!make_opts[@]}"; do printf '%s\n' "${make_opts[x]}"; done;)"
 	unset riseupvpn_gws riseupvpn_gw_sel gw_len make_opts
 }
 
