@@ -31,7 +31,7 @@ on_exit() {
 }
 
 # Requirements for this script
-_command getent curl jq sed mktemp openvpn egrep netcat id kill openssl resolvconf
+_command getent curl jq sed mktemp openvpn egrep netcat id openssl resolvconf
 
 # Check if required user and group for openvpn are installed
 if [ "$(getent passwd nobody)" = "" ]
