@@ -206,7 +206,6 @@ check_if_changes() {
 			resolvconf -x -a "$device" <<-EOF
 				nameserver 10.41.0.1
 				nameserver 10.42.0.1
-				search ~.
 			EOF
 		fi
 		egrep -m 1 '^>STATE:.*,RECONNECTING,' <<< "$line" >/dev/null 2>&1 && break >/dev/null 2>&1
