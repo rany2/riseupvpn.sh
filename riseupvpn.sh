@@ -20,12 +20,13 @@ _command() {
 # Function to clean-up on exit
 on_exit() {
 	set +u
-	echo "* Removed residue files"
-	rm -f -- "$management_sock" "$pid_file" 2>/dev/null
+	local is_removed=0
+	[ -f "$management_sock" ] && rm -f -- "$management_sock" 2>/dev/null && is_removed=1
+	[ -f "$pid_file" ] && rm -f -- "$pid_file" 2>/dev/null && is_removed=1
+	[ $is_removed -eq 1 ] && echo "* Removed residue files"
 	declare -g pid_file=""
 	declare -g management_sock=""
 	resolvconf -d "$device" >/dev/null 2>&1
-	echo
 	set -u
 }
 
@@ -109,13 +110,11 @@ make_cert_and_cmdline() {
 	# Show list of RiseupVPN locations if requested by user
 	if [ $showlocation -eq 1 ]
 	then
-		echo
 		echo "* Available locations:"
 		while read -r l
 		do
 			echo "  - $l"
 		done < <(jq -cr '.locations | to_entries[] | .key' <<< "$riseupvpn_gws")
-		echo
 		exit 0
 	fi
 
