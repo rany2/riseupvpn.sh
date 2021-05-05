@@ -82,7 +82,7 @@ get_api_ca() {
 		# shellcheck disable=SC2207
 		ca_cert=( $(curl --silent "${_riseupvpn_ca}" | jq -cr '.ca_cert_uri+"\n"+.ca_cert_fingerprint'))
 		api_cert="$(curl --silent "${ca_cert[0]}")"
-		api_finger="$(echo "$api_cert" | openssl x509 -sha256 -fingerprint -noout | sed -e 's/://g' -e 's/ Fingerprint=/: /g')"
+		api_finger="$(openssl x509 -sha256 -fingerprint -noout <<< "$api_cert" | sed -e 's/://g' -e 's/ Fingerprint=/: /g')"
 		if [ "${api_finger,,}" == "${ca_cert[1],,}" ]
 		then
 			echo "* Got API certificate and verfied"
@@ -103,14 +103,14 @@ make_cert_and_cmdline() {
 		local riseupvpn_gw_sel
 		riseupvpn_gw_list="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn_gw/json")"
 		# shellcheck disable=SC2207
-		riseupvpn_gw_sel=( $(echo "$riseupvpn_gw_list" | jq -cr '.gateways[0:] | .[]') )
+		riseupvpn_gw_sel=( $(jq -cr '.gateways[0:] | .[]' <<< "$riseupvpn_gw_list") )
 		unset riseupvpn_gw_list
 	fi
 	echo "* Getting new public and private certificate for the OpenVPN connection"
 	riseupvpn_cert="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/cert" || curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/cert")"
 	declare -g riseupvpn_private_key riseupvpn_public_key
-	riseupvpn_private_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d')"
-	riseupvpn_public_key="$(echo "$riseupvpn_cert" | sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d')"
+	riseupvpn_private_key="$(sed -e '/-----BEGIN RSA PRIVATE KEY-----/,/-----END RSA PRIVATE KEY-----/!d' <<< "$riseupvpn_cert")"
+	riseupvpn_public_key="$(sed -e '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/!d' <<< "$riseupvpn_cert")"
 	unset riseupvpn_cert
 
 	declare -a -g make_opts=""
@@ -118,31 +118,29 @@ make_cert_and_cmdline() {
 	declare riseupvpn_gws
 	riseupvpn_gws="$(curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/3/config/eip-service.json" || curl "${_curl_std_opts_api[@]}" --cacert <(printf %s "$api_cert") "$_riseupvpn/1/config/eip-service.json")"
 	# shellcheck disable=SC2207
-	declare -a gw_len=( $(echo "$riseupvpn_gws" | jq -r '.gateways[] | .ip_address') )
+	declare -a gw_len=( $(jq -r '.gateways[] | .ip_address' <<< "$riseupvpn_gws") )
 	IFS=''
 	for i in "${!gw_len[@]}"
 	do
 		set +u
 		if [ -n "${riseupvpn_gw_sel[$i]}" ]
 		then
-			riseupvpn_gw_sel[$i]="$(echo "$riseupvpn_gws" | jq -cr  ".gateways[] | select(.host == \"${riseupvpn_gw_sel[$i]}\") | .ip_address")"
-		fi
-		set -u
-		if [ -z "${riseupvpn_gw_sel[$i]}" ]
-		then
+			riseupvpn_gw_sel[$i]="$(jq -cr  ".gateways[] | select(.host == \"${riseupvpn_gw_sel[$i]}\") | .ip_address" <<< "$riseupvpn_gws")"
+		else
+			set -u
 			if [ "$_riseupvpn_gw" != "none" ]
 			then
 				echo "* List of closest servers failed. Picking server(s) at random."
 			fi
-			riseupvpn_gw_sel[$i]="$(echo "$riseupvpn_gws" | jq -cr  ".gateways[$i] | .ip_address")"
+			riseupvpn_gw_sel[$i]="$(jq -cr  ".gateways[$i] | .ip_address" <<< "$riseupvpn_gws")"
 		fi
 		local location
-		location="$(echo "$riseupvpn_gws" | jq -cr ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key== \"location\") | .value")"
+		location="$(jq -cr ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key== \"location\") | .value" <<< "$riseupvpn_gws")"
 		if [[ ! ${blacklist_locations[*]} =~ $location ]] || [[ -z $location ]]
 		then
 			local port proto
-			port="$(echo "$riseupvpn_gws" | jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .ports[0]")"
-			proto="$(echo "$riseupvpn_gws" | jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .protocols[0]")"
+			port="$(jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .ports[0]" <<< "$riseupvpn_gws")"
+			proto="$(jq -cr  ".gateways[] | select(.ip_address == \"${riseupvpn_gw_sel[$i]}\") | to_entries[] | select(.key == \"capabilities\")| .value.transport | .[] | select(.type == \"openvpn\") | .protocols[0]" <<< "$riseupvpn_gws")"
 			case $proto in
 					tcp) local proto="tcp-client" ;;
 			esac
@@ -150,8 +148,8 @@ make_cert_and_cmdline() {
 		fi
 	done
 	declare -g ovpn_config_file
-	ovpn_config_file="$(echo "$riseupvpn_gws" | jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""')"
-	IFS=$'\n' ovpn_config_file="$(echo "$ovpn_config_file" | sed -e '/ \"false\"$/d' -e 's/ \"true\"$//g' -e 's/ \"/ /g' -e 's/\"$//g' -e 's/^--//g')"
+	ovpn_config_file="$(jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""' <<< "$riseupvpn_gws")"
+	IFS=$'\n' ovpn_config_file="$(sed -e '/ \"false\"$/d' -e 's/ \"true\"$//g' -e 's/ \"/ /g' -e 's/\"$//g' -e 's/^--//g' <<< "$ovpn_config_file")"
 	ovpn_config_file="$(IFS=''; for x in "${!ovpn_config_file[@]}"; do echo "${ovpn_config_file[x]}"; done;)"
 	ovpn_config_file="${ovpn_config_file} $(IFS=''; for x in "${!make_opts[@]}"; do echo "${make_opts[x]}"; done;)"
 	unset riseupvpn_gws riseupvpn_gw_sel gw_len make_opts
@@ -176,7 +174,7 @@ check_if_changes() {
 	# shellcheck disable=SC2196
 	while IFS= read -r line || [[ -n "$line" ]]
 	do
-		if echo "$line" | egrep -m 1 '^>STATE:.*,CONNECTED,' >/dev/null 2>&1
+		if egrep -m 1 '^>STATE:.*,CONNECTED,' <<< "$line" >/dev/null 2>&1
 		then
 			resolvconf -x -a "$device" <<-EOF
 				nameserver 10.41.0.1
@@ -184,7 +182,7 @@ check_if_changes() {
 				search ~.
 			EOF
 		fi
-		echo "$line" | egrep -m 1 '^>STATE:.*,RECONNECTING,' >/dev/null 2>&1 && break >/dev/null 2>&1
+		egrep -m 1 '^>STATE:.*,RECONNECTING,' <<< "$line" >/dev/null 2>&1 && break >/dev/null 2>&1
 	done < <(echo 'state on' | netcat -U "$management_sock")
 }
 
