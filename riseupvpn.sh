@@ -38,7 +38,7 @@ on_exit() {
 }
 
 # Requirements for this script
-_command curl jq sed mktemp openvpn egrep netcat id kill openssl resolvconf
+_command getent curl jq sed mktemp openvpn egrep netcat id kill openssl resolvconf
 
 # Check if required user and group for openvpn are installed
 if [ "$(getent passwd nobody)" = "" ]
@@ -150,8 +150,8 @@ make_cert_and_cmdline() {
 	declare -g ovpn_config_file
 	ovpn_config_file="$(jq -rc '.openvpn_configuration | to_entries[] | "--\(.key) \"\(.value)\""' <<< "$riseupvpn_gws")"
 	IFS=$'\n' ovpn_config_file="$(sed -e '/ \"false\"$/d' -e 's/ \"true\"$//g' -e 's/ \"/ /g' -e 's/\"$//g' -e 's/^--//g' <<< "$ovpn_config_file")"
-	ovpn_config_file="$(IFS=''; for x in "${!ovpn_config_file[@]}"; do echo "${ovpn_config_file[x]}"; done;)"
-	ovpn_config_file="${ovpn_config_file} $(IFS=''; for x in "${!make_opts[@]}"; do echo "${make_opts[x]}"; done;)"
+	ovpn_config_file="$(IFS=''; for x in "${!ovpn_config_file[@]}"; do printf '%s\n' "${ovpn_config_file[x]}"; done;)"
+	ovpn_config_file="${ovpn_config_file} $(IFS=''; for x in "${!make_opts[@]}"; do printf '%s\n' "${make_opts[x]}"; done;)"
 	unset riseupvpn_gws riseupvpn_gw_sel gw_len make_opts
 }
 
